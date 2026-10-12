@@ -71,16 +71,23 @@
 
   // ---- 画面フィット ----
   let viewScale = 1;
+  const stage = document.getElementById('stage');
   function fit() {
     const dpr = window.devicePixelRatio || 1;
     viewScale = Math.min(window.innerWidth / W, window.innerHeight / H);
-    canvas.style.width = Math.floor(W * viewScale) + 'px';
-    canvas.style.height = Math.floor(H * viewScale) + 'px';
+    const cssW = Math.floor(W * viewScale), cssH = Math.floor(H * viewScale);
+    if (stage) { stage.style.width = cssW + 'px'; stage.style.height = cssH + 'px'; }
+    canvas.style.width = cssW + 'px';
+    canvas.style.height = cssH + 'px';
     canvas.width = Math.floor(W * dpr * viewScale);
     canvas.height = Math.floor(H * dpr * viewScale);
+    if (window.__render3d) window.__render3d.resize(cssW, cssH, dpr);
   }
   window.addEventListener('resize', fit);
+  // 3D描画(render3d.js)の準備ができたら大きさを合わせる。読み込めなければ2D描画のまま
+  window.addEventListener('render3d-ready', fit);
   fit();
+  const r3 = () => window.__render3d || null;
 
   // ---- 保存(使えない環境でも動くように try/catch) ----
   function load(key, fallback) {
@@ -821,7 +828,7 @@
   }
 
   function drawTitle() {
-    for (const d of state.deco) drawShape(d, 0.15);
+    if (!r3()) for (const d of state.deco) drawShape(d, 0.15);
 
     // ロゴ: 文字ごとに少し跳ねる
     const logo = 'よけゲー';
@@ -838,7 +845,7 @@
     state.player.x = W / 2 + Math.sin(now * 1.6) * 60;
     state.player.tilt = Math.cos(now * 1.6) * 0.2;
     state.player.y = 262 + Math.sin(now * 3.2) * 12;
-    drawPlayer(1);
+    if (!r3()) drawPlayer(1);
 
     button('スタート', 335, COLORS.player);
     text(state.best > 0 ? `ハイスコア  ${state.best}` : 'ハイスコア  ―', W / 2, 385, 16, COLORS.coin);
@@ -875,7 +882,8 @@
   }
 
   function drawHud() {
-    // 自機が動ける範囲の上端をうっすら示す
+    // 自機が動ける範囲の上端をうっすら示す(3D描画では床に線を引く)
+    if (!r3()) {
     ctx.save();
     ctx.strokeStyle = 'rgba(79,209,255,0.12)';
     ctx.setLineDash([6, 8]);
@@ -884,6 +892,7 @@
     ctx.lineTo(W, H * TUNE.playerMinY - TUNE.playerSize / 2);
     ctx.stroke();
     ctx.restore();
+    }
     text(String(Math.floor(state.score)), W / 2, 36, 30);
     text(`LV ${state.level}`, 12, 20, 13, COLORS.sub, 'left');
     text(`${state.t.toFixed(1)}秒`, 12, 38, 13, COLORS.sub, 'left');
@@ -981,7 +990,7 @@
     text('タップ / スペースでリトライ', W / 2, 590, 12, COLORS.sub);
   }
 
-  function draw() {
+  function draw(dt) {
     const sx = canvas.width / W, sy = canvas.height / H;
     let ox = 0, oy = 0;
     if (state.shake > 0) {
@@ -989,29 +998,37 @@
       ox = (Math.random() - 0.5) * m;
       oy = (Math.random() - 0.5) * m;
     }
-    ctx.setTransform(sx, 0, 0, sy, ox * sx, oy * sy);
-
-    ctx.fillStyle = COLORS.bg;
-    ctx.fillRect(-20, -20, W + 40, H + 40);
-    ctx.fillStyle = 'rgba(255,255,255,0.5)';
-    for (const s of state.stars) ctx.fillRect(s.x, s.y, s.r, s.r);
-
-    if (state.scene === 'title') {
-      drawTitle();
+    const three = r3();
+    if (three) {
+      // 3D: 世界は WebGL で描き、この canvas には文字やボタンなどの表示だけを重ねる
+      three.render(state, { dt, shakeX: ox, shakeY: oy, playerMinY: TUNE.playerMinY, playerSize: TUNE.playerSize });
+      ctx.setTransform(sx, 0, 0, sy, 0, 0);
+      ctx.clearRect(0, 0, W, H);
+      if (state.scene === 'title') drawTitle();
     } else {
-      for (const o of state.things) {
-        if (o.kind === 'wall') drawWall(o); else drawShape(o);
-      }
-      if (state.scene === 'play' || state.scene === 'countdown' || state.scene === 'paused') drawWarnings();
-      if (state.scene !== 'dying' && state.scene !== 'over') drawPlayer(1);
-    }
+      ctx.setTransform(sx, 0, 0, sy, ox * sx, oy * sy);
+      ctx.fillStyle = COLORS.bg;
+      ctx.fillRect(-20, -20, W + 40, H + 40);
+      ctx.fillStyle = 'rgba(255,255,255,0.5)';
+      for (const s of state.stars) ctx.fillRect(s.x, s.y, s.r, s.r);
 
-    for (const q of state.particles) {
-      ctx.globalAlpha = Math.max(0, q.life / q.max);
-      ctx.fillStyle = q.color;
-      ctx.fillRect(q.x - q.size / 2, q.y - q.size / 2, q.size, q.size);
+      if (state.scene === 'title') {
+        drawTitle();
+      } else {
+        for (const o of state.things) {
+          if (o.kind === 'wall') drawWall(o); else drawShape(o);
+        }
+        if (state.scene === 'play' || state.scene === 'countdown' || state.scene === 'paused') drawWarnings();
+        if (state.scene !== 'dying' && state.scene !== 'over') drawPlayer(1);
+      }
+
+      for (const q of state.particles) {
+        ctx.globalAlpha = Math.max(0, q.life / q.max);
+        ctx.fillStyle = q.color;
+        ctx.fillRect(q.x - q.size / 2, q.y - q.size / 2, q.size, q.size);
+      }
+      ctx.globalAlpha = 1;
     }
-    ctx.globalAlpha = 1;
 
     if (state.flash > 0) {
       ctx.fillStyle = `rgba(255,255,255,${state.flash * 0.6})`;
@@ -1019,7 +1036,11 @@
     }
 
     if (state.scene === 'play' || state.scene === 'paused' || state.scene === 'dying' || state.scene === 'countdown') drawHud();
-    for (const q of state.popups) text(q.str, q.x, q.y, q.size, q.color, 'center', Math.min(1, q.life * 2));
+    for (const q of state.popups) {
+      // 3Dでは、物体が見えている位置に文字を出す
+      const at = three ? three.project(q.x, q.y, 1.2) : q;
+      text(q.str, at.x, at.y, q.size, q.color, 'center', Math.min(1, q.life * 2));
+    }
     drawBanner();
 
     if (state.scene === 'countdown') {
@@ -1043,11 +1064,11 @@
     const dt = Math.min(0.05, (now - last) / 1000); // タブ復帰時の大ジャンプを防ぐ
     last = now;
     update(dt);
-    draw();
+    draw(dt);
     requestAnimationFrame(loop);
   }
   requestAnimationFrame(loop);
 
   // 動作確認用
-  window.__dodge = { state, TUNE, start, stick };
+  window.__dodge = { state, TUNE, start, stick, is3D: () => !!r3() };
 })();

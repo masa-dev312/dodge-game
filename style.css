@@ -12,10 +12,19 @@ body {
   align-items: center;
   justify-content: center;
 }
+#stage {
+  position: relative;
+  background: #11142a;
+}
 canvas {
   display: block;
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+/* 3D描画が使えないときは #game だけで背景まで描く */
+#world {
   background: #11142a;
-  image-rendering: auto;
 }
 #controls {
   position: fixed;
