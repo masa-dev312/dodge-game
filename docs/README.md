@@ -7,5 +7,6 @@
 | [security.md](security.md) | セキュリティレビューの結果 |
 | [shooter-planning.md](shooter-planning.md) | シューティング版「よけうち」の企画書 |
 | [shooter-design.md](shooter-design.md) | シューティング版「よけうち」の設計書 |
+| [development.md](development.md) | 開発の手引き。TypeScript のビルド、lint、型チェック |
 
 よけゲーの資料は 2026-10-12 時点の `main`(コミット `c96e92b`)に合わせています。よけゲーはこの状態で完成とし、シューティング版は `shooter/` に別に作っています。

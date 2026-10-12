@@ -1,0 +1,29 @@
+name: check
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: lint
+        run: npm run lint
+      - name: typecheck
+        run: npm run typecheck
+      # 配信する JavaScript が TypeScript のソースから作り直したものと同じか確かめる
+      - name: build output is up to date
+        run: |
+          npm run build
+          git diff --exit-code -- game.js render3d.js shooter/game.js shooter/render3d.js

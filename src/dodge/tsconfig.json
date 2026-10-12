@@ -1,0 +1,10 @@
+{
+  // よけゲー。ビルドするとリポジトリ直下の game.js / render3d.js ができる
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "../.."
+  },
+  "include": ["*.ts", "vendor/*.d.ts"],
+  "exclude": []
+}

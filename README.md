@@ -24,7 +24,9 @@
 静的ファイルのみです(`index.html` / `style.css` / `game.js` / `render3d.js`)。3D描画には同梱の [Three.js](vendor/three.LICENSE)(MIT ライセンス)を使い、WebGL が使えない環境では2Dで表示します。
 ハイスコアはブラウザの localStorage に保存します。
 
-難易度などの調整値は `game.js` 先頭の `TUNE` にまとめています。
+ソースは TypeScript で `src/` にあり、`game.js` などはそこからビルドしたものです。直接書き換えず、`src/` を変えて `npm run build` を実行してください。lint は `npm run lint`、型チェックは `npm run typecheck` です。詳しくは [開発の手引き](docs/development.md) を見てください。
+
+難易度などの調整値は `src/dodge/game.ts` 先頭の `TUNE` にまとめています。
 
 ## シューティング版「よけうち」
 

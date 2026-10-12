@@ -12,6 +12,7 @@
 | `style.css` | 画面中央への配置、背景色、ボタンの見た目、スクロールやズームの抑止 |
 | `game.js` | ゲームの本体(状態、入力、更新、当たり判定、効果音、保存)と、文字・ボタンの描画。3Dが使えないときは世界も2Dで描く |
 | `render3d.js` | 3D描画(ES モジュール)。`game.js` の状態を読んで見た目だけを3Dで描く |
+| `src/dodge/*.ts` | `game.js` と `render3d.js` の TypeScript ソース。ビルド方法は [development.md](development.md) |
 | `vendor/three.module.min.js` | Three.js r160(MIT ライセンス、`vendor/three.LICENSE`) |
 | `.nojekyll` | GitHub Pages で Jekyll による変換を行わないための空ファイル |
 | `docs/` | 本資料 |
