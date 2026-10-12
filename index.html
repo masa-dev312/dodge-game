@@ -8,14 +8,18 @@
 <title>よけゲー</title>
 <meta name="description" content="せまりくる図形を上下左右に動いてよけつづける、1プレイ約1分のブラウザゲーム">
 <meta name="theme-color" content="#11142a">
-<link rel="stylesheet" href="style.css?v=4">
+<link rel="stylesheet" href="style.css?v=5">
 </head>
 <body>
-<canvas id="game" width="360" height="640"></canvas>
+<div id="stage">
+  <canvas id="world"></canvas>
+  <canvas id="game" width="360" height="640"></canvas>
+</div>
 <div id="controls">
   <button id="pause" aria-label="一時停止">Ⅱ</button>
   <button id="mute" aria-label="ミュート切替">🔊</button>
 </div>
-<script src="game.js?v=4"></script>
+<script src="game.js?v=5"></script>
+<script type="module" src="render3d.js?v=5"></script>
 </body>
 </html>
