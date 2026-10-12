@@ -17,19 +17,30 @@
     hitboxScale: 0.7,      // 当たり判定を見た目より小さくする割合
     baseFall: 160,         // 落下速度の初期値 px/秒
     fallGrowth: 4,         // 1秒ごとに増える落下速度
-    baseInterval: 0.75,    // 出現間隔の初期値 秒(壊せるぶん、よけゲーより多め)
-    minInterval: 0.28,
+    baseInterval: 0.6,     // 出現間隔の初期値 秒(壊せるぶん、よけゲーより多め)
+    minInterval: 0.22,
     intervalDecay: 0.012,  // 1秒ごとに縮む出現間隔
     coinChance: 0.12,
     shieldChance: 0.03,
     pointsPerSecond: 5,
-    fireInterval: 0.16,    // 弾を撃つ間隔(秒)。弾は自動で撃つ
+    fireInterval: 0.2,     // 弾を撃つ間隔(秒)。弾は自動で撃つ
     bulletSpeed: 720,      // 弾の速さ px/秒
     bulletR: 4,            // 弾の当たり判定の半径
-    powerChance: 0.04,     // パワーアップの出現確率
-    powerTime: 8,          // パワーアップ(3方向に撃つ)が続く秒数
-    hp: { circle: 1, triangle: 1, sweeper: 1, diamond: 2, riser: 2, hexagon: 4 },
+    powerChance: 0.02,     // パワーアップの出現確率(ブンレツを壊したときにも落ちる)
+    powerTime: 6,          // パワーアップ(3方向に撃つ)が続く秒数
+    hp: { circle: 1, triangle: 1, sweeper: 1, diamond: 3, riser: 2, hexagon: 6 },
+    bigCircleR: 20,        // この半径以上のボールは HP 2
     killPoints: { circle: 20, triangle: 30, sweeper: 30, diamond: 40, riser: 40, hexagon: 60 },
+    chainWindow: 1.2,      // この秒数以内に次を壊すと撃破チェインが続く
+    maxChain: 8,           // 撃破点にかかる倍率の上限
+    blastR: 46,            // 誘爆: 壊れた図形のまわりこの距離にいる図形に1ダメージ
+    closeDist: 110,        // 自機からこの距離以内で壊すと「ギリギリ撃破」で点が2倍
+    dropCoin: 0.12,        // 壊したときにコインを落とす確率
+    wallGap: 120,          // カベのすき間の幅(よけゲーは 90)
+    wallEvery: 4,          // カベとカベの間は最低この秒数あける
+    wallClear: 0.6,        // カベが出た直後、この秒数は他の障害物を出さない
+    wallWiden: 6,          // すき間のふち近くに弾を当てると、すき間がこの px 広がる
+    wallMaxGap: 200,
     coinPoints: 50,
     nearMissDist: 16,      // 当たり判定の外側この距離以内をかすめたらニアミス
     nearMissPoints: 5,     // ニアミス1回の基本点(コンボ倍率がかかる)
@@ -72,10 +83,10 @@
     { kind: 'circle', name: 'ボール', desc: 'まっすぐ落ちる', from: 0 },
     { kind: 'triangle', name: 'トゲ', desc: '速い。上に予告が出る', from: 10 },
     { kind: 'sweeper', name: 'ヨコギリ', desc: '横から飛んでくる', from: 20 },
-    { kind: 'diamond', name: 'ゆらゆら', desc: '左右にゆれる。2発で壊れる', from: 30 },
-    { kind: 'wall', name: 'カベ', desc: '壊せない。すき間を通る', from: 40 },
+    { kind: 'diamond', name: 'ゆらゆら', desc: '左右にゆれる。3発で壊れる', from: 30 },
+    { kind: 'wall', name: 'カベ', desc: 'ふちを撃つとすき間が広がる', from: 40 },
     { kind: 'riser', name: 'ツキアゲ', desc: '下から来る。2発で壊れる', from: 50 },
-    { kind: 'hexagon', name: 'ブンレツ', desc: '固い。壊すと2つに割れる', from: 60 },
+    { kind: 'hexagon', name: 'ブンレツ', desc: '固い。壊すと3方向が出る', from: 60 },
   ];
 
   // ---- 画面フィット ----
@@ -146,7 +157,7 @@
     over: () => { beep(330, 0.25, 'triangle', 0.12); later(200, () => beep(247, 0.25, 'triangle', 0.12)); later(400, () => beep(196, 0.5, 'triangle', 0.12)); },
     shoot: () => beep(1400, 0.03, 'square', 0.015, 900),
     hit: () => beep(500, 0.04, 'square', 0.04),
-    explode: () => { beep(180, 0.25, 'sawtooth', 0.1, 50); beep(90, 0.3, 'triangle', 0.1); },
+    explode: (chain) => { const k = 1 + Math.min(7, (chain || 1) - 1) * 0.12; beep(180 * k, 0.25, 'sawtooth', 0.1, 50); beep(90 * k, 0.3, 'triangle', 0.1); },
     power: () => { [440, 660, 880].forEach((f, i) => later(i * 70, () => beep(f, 0.12, 'square', 0.08))); },
     best: () => { [523, 659, 784, 1047].forEach((f, i) => later(i * 90, () => beep(f, 0.15, 'square', 0.08))); },
   };
@@ -320,6 +331,7 @@
       t: 0, score: 0, newBest: false, level: 1, coins: 0, nearMisses: 0,
       combo: 0, maxCombo: 0, comboTimer: 0, things: [], particles: [], popups: [],
       bullets: [], fireTimer: 0, power: 0, kills: 0,
+      chain: 0, chainTimer: 0, maxChain: 0, blasts: 0, closeKills: 0, lastWallT: -99, quietT: 0,
       trail: [], banner: null, spawnTimer: 0.4, shake: 0, flash: 0,
     });
     state.player.x = W / 2;
@@ -380,13 +392,18 @@
       return;
     }
 
-    // 時間に応じて出てくる障害物を増やす
-    const pool = SHAPES.filter((s) => t >= s.from).map((s) => s.kind);
+    // カベの直後は他の障害物を出さず、すき間へ向かう余裕を作る
+    if (state.quietT > 0) return;
+    // 時間に応じて出てくる障害物を増やす。カベは続けて出ないようにする
+    const wallOk = t - state.lastWallT >= TUNE.wallEvery;
+    const pool = SHAPES.filter((s) => t >= s.from && (s.kind !== 'wall' || wallOk)).map((s) => s.kind);
     const kind = pool[Math.floor(Math.random() * pool.length)];
 
     if (kind === 'wall') {
-      const gap = 90;
+      const gap = TUNE.wallGap;
       const vy = v * 0.7;
+      state.lastWallT = t;
+      state.quietT = TUNE.wallClear;
       // 予告表示の時間ぶん画面の上から始める
       state.things.push({ kind: 'wall', y: -16 - vy * TUNE.warnTime, h: 16, gapX: 20 + Math.random() * (W - gap - 40), gap, vy });
       return;
@@ -412,6 +429,7 @@
     }
     const r = kind === 'circle' ? 13 + Math.random() * 11 : kind === 'hexagon' ? 18 : 14;
     const o = { kind, x: rx(r), y: -r, r, vy: v, vx: 0, rot: Math.random() * 6, spin: (Math.random() - 0.5) * 4, hp: TUNE.hp[kind] };
+    if (kind === 'circle' && r >= TUNE.bigCircleR) o.hp = 2;
     if (kind === 'triangle') { o.vy = v * 1.5; o.y = -r - o.vy * TUNE.warnTime; o.spin = 0; }
     if (kind === 'diamond') { o.baseX = o.x; o.phase = Math.random() * Math.PI * 2; o.amp = 40 + Math.random() * 30; o.spin = 3; }
     if (kind === 'hexagon') { o.vy = v * 0.8; o.splitY = H * (0.3 + Math.random() * 0.15); }
@@ -428,6 +446,14 @@
   }
   function popup(x, y, str, color, size) {
     state.popups.push({ x, y, str, color: color || COLORS.text, size: size || 16, life: 0.9 });
+  }
+  // 輪になって広がる破片(誘爆の範囲を見せる)
+  function ring(x, y, r, color) {
+    const n = 16;
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2;
+      state.particles.push({ x: x + Math.cos(a) * r * 0.3, y: y + Math.sin(a) * r * 0.3, vx: Math.cos(a) * r * 2.2, vy: Math.sin(a) * r * 2.2, life: 0.32, max: 0.32, color, size: 3 });
+    }
   }
   function levelUp(level) {
     const unlocked = SHAPES.find((s) => s.from === (level - 1) * TUNE.levelSeconds && s.from > 0);
@@ -492,6 +518,11 @@
       state.comboTimer -= dt;
       if (state.comboTimer <= 0) state.combo = 0;
     }
+    if (state.chainTimer > 0) {
+      state.chainTimer -= dt;
+      if (state.chainTimer <= 0) state.chain = 0;
+    }
+    if (state.quietT > 0) state.quietT -= dt;
 
     movePlayer(dt);
 
@@ -522,22 +553,50 @@
     sfx.shoot();
   }
 
-  function destroy(o) {
+  // 図形を壊す。新しく生まれる物(割れたボール、落とし物)を返す。
+  // dead に入れた図形は呼び出し側で取り除く
+  function destroy(o, dead, cause) {
+    dead.add(o);
     state.kills++;
-    const pts = TUNE.killPoints[o.kind] || 20;
+    // 撃破チェイン: 続けて壊すほど倍率が上がる
+    state.chain = Math.min(TUNE.maxChain, state.chain + 1);
+    state.chainTimer = TUNE.chainWindow;
+    state.maxChain = Math.max(state.maxChain, state.chain);
+    const p = state.player;
+    const close = cause === 'shot' && Math.hypot(o.x - p.x, o.y - p.y) < TUNE.closeDist;
+    if (close) state.closeKills++;
+    if (cause === 'blast') state.blasts++;
+    const pts = (TUNE.killPoints[o.kind] || 20) * state.chain * (close ? 2 : 1);
     state.score += pts;
     burst(o.x, o.y, COLORS[o.kind] || COLORS.circle, 18, 200);
-    popup(o.x, o.y - 10, `+${pts}`, COLORS.text, 14);
-    sfx.explode();
+    const label = close ? `ギリギリ +${pts}` : state.chain > 1 ? `x${state.chain} +${pts}` : `+${pts}`;
+    popup(o.x, o.y - 10, label, close ? '#ff8fd8' : state.chain > 1 ? COLORS.coin : COLORS.text, close || state.chain > 3 ? 16 : 14);
+    sfx.explode(state.chain);
     state.shake = Math.max(state.shake, 0.08);
-    const extra = [];
+    let extra = [];
     if (o.kind === 'hexagon') {
-      // 壊すと2つの小さなボールに割れる
+      // 壊すと2つの小さなボールに割れ、3方向アイテムを落とす
       for (const sgn of [-1, 1]) {
         extra.push({ kind: 'circle', x: o.x, y: o.y, r: 11, vy: o.vy, vx: sgn * (70 + Math.random() * 50), rot: 0, spin: 0, split: true, hp: 1 });
       }
+      extra.push({ kind: 'power', x: o.x, y: o.y, r: 12, vy: Math.max(90, o.vy * 0.6), rot: 0 });
+    } else if (Math.random() < TUNE.dropCoin) {
+      extra.push({ kind: 'coin', x: o.x, y: o.y, r: 10, vy: Math.max(90, o.vy * 0.6), rot: 0 });
+    }
+    // 誘爆: まわりの図形に1ダメージ。壊れたらさらに誘爆する
+    ring(o.x, o.y, TUNE.blastR, COLORS[o.kind] || COLORS.circle);
+    for (const q of state.things) {
+      if (dead.has(q) || !breakable(q)) continue;
+      if (Math.hypot(q.x - o.x, q.y - o.y) > TUNE.blastR + q.r) continue;
+      q.hp = (q.hp || 1) - 1;
+      q.hitT = 0.08;
+      if (q.hp <= 0) extra = extra.concat(destroy(q, dead, 'blast'));
     }
     return extra;
+  }
+
+  function breakable(o) {
+    return o.kind !== 'wall' && o.kind !== 'coin' && o.kind !== 'shield' && o.kind !== 'power';
   }
 
   function moveBullets(dt) {
@@ -564,20 +623,25 @@
   // 弾が何かに当たったら true を返す
   function bulletHit(b, dead, addBorn) {
     for (const o of state.things) {
-      if (dead.has(o) || o.kind === 'coin' || o.kind === 'shield' || o.kind === 'power') continue;
+      if (dead.has(o)) continue;
       if (o.kind === 'wall') {
-        // カベは壊せない。弾を止めるだけ
+        // カベは壊せない。弾を止める。すき間のふち近くに当たると、すき間が広がる
         const inBand = b.y > o.y && b.y < o.y + o.h;
         const inGap = b.x > o.gapX && b.x < o.gapX + o.gap;
-        if (inBand && !inGap) { burst(b.x, o.y + o.h, COLORS.wall, 3, 80); return true; }
-        continue;
+        if (!inBand || inGap) continue;
+        burst(b.x, o.y + o.h, COLORS.wall, 3, 80);
+        if (o.gap < TUNE.wallMaxGap) {
+          const w = TUNE.wallWiden;
+          if (b.x <= o.gapX && o.gapX - b.x < 40) { const nx = Math.max(0, o.gapX - w); o.gap += o.gapX - nx; o.gapX = nx; }
+          else if (b.x >= o.gapX + o.gap && b.x - o.gapX - o.gap < 40) o.gap = Math.min(W - o.gapX, o.gap + w);
+        }
+        return true;
       }
-      if (!hitCircle(b.x, b.y, TUNE.bulletR, o)) continue;
+      if (!breakable(o) || !hitCircle(b.x, b.y, TUNE.bulletR, o)) continue;
       o.hp = (o.hp || 1) - 1;
       o.hitT = 0.08;
       if (o.hp <= 0) {
-        dead.add(o);
-        addBorn(destroy(o));
+        addBorn(destroy(o, dead, 'shot'));
       } else {
         burst(b.x, b.y, COLORS.bullet, 4, 90);
         sfx.hit();
@@ -1012,7 +1076,7 @@
         drawShape({ kind: s.kind, x: cx, y: cy, r: 11, rot: now }, 1);
       }
       text(s.name, cx, cy + 20, 11, COLORS.text);
-      const hp = TUNE.hp[s.kind];
+      const hp = s.kind === 'circle' ? '1〜2' : TUNE.hp[s.kind];
       text(hp ? `HP ${hp}` : '壊せない', cx, cy + 33, 9, hp ? COLORS.sub : COLORS.warn);
     });
     const items = [['coin', 'コイン'], ['shield', 'シールド'], ['power', '3方向']];
@@ -1047,6 +1111,13 @@
     text(`撃破 ${state.kills}`, 12, 56, 13, COLORS.sub, 'left');
     if (state.combo > 1) {
       text(`コンボ x${state.combo}`, W / 2, 64, 14, '#ff8fd8', 'center', Math.min(1, state.comboTimer));
+    }
+    if (state.chain > 1) {
+      // 撃破チェインの倍率と、切れるまでの残り時間
+      const y = state.combo > 1 ? 84 : 64;
+      text(`撃破チェイン x${state.chain}`, W / 2, y, 15, COLORS.coin, 'center');
+      ctx.fillStyle = COLORS.coin;
+      ctx.fillRect(W / 2 - 50, y + 12, 100 * Math.max(0, state.chainTimer / TUNE.chainWindow), 3);
     }
     // 指で操作中はスティックを表示する
     if (stick.id !== null) {
@@ -1124,9 +1195,9 @@
       ['生存時間', `${state.t.toFixed(1)}秒`],
       ['到達レベル', `${state.level}`],
       ['撃破数', `${state.kills}`],
+      ['最大チェイン', `x${state.maxChain}`],
       ['コイン', `${state.coins}`],
-      ['ニアミス', `${state.nearMisses}回`],
-      ['最大コンボ', `x${state.maxCombo}`],
+      ['ニアミス(最大コンボ)', `${state.nearMisses}回 (x${state.maxCombo})`],
     ];
     ctx.fillStyle = 'rgba(255,255,255,0.06)';
     roundRect(50, 345, W - 100, stats.length * 26 + 16, 12);
