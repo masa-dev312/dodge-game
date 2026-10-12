@@ -15,15 +15,15 @@
     playerSpeed: 300,      // px/秒
     playerSize: 28,
     hitboxScale: 0.7,      // 当たり判定を見た目より小さくする割合
-    baseFall: 160,         // 落下速度の初期値 px/秒
-    fallGrowth: 4,         // 1秒ごとに増える落下速度
-    baseInterval: 0.6,     // 出現間隔の初期値 秒(壊せるぶん、よけゲーより多め)
-    minInterval: 0.22,
+    baseFall: 175,         // 落下速度の初期値 px/秒(よけゲーは 160)
+    fallGrowth: 5,         // 1秒ごとに増える落下速度(よけゲーは 4)
+    baseInterval: 0.55,    // 出現間隔の初期値 秒(壊せるぶん、よけゲーより多め)
+    minInterval: 0.2,
     intervalDecay: 0.012,  // 1秒ごとに縮む出現間隔
     coinChance: 0.12,
     shieldChance: 0.03,
     pointsPerSecond: 5,
-    fireInterval: 0.2,     // 弾を撃つ間隔(秒)。弾は自動で撃つ
+    fireInterval: 0.22,    // 弾を撃つ間隔(秒)。弾は自動で撃つ
     bulletSpeed: 720,      // 弾の速さ px/秒
     bulletR: 4,            // 弾の当たり判定の半径
     powerChance: 0.02,     // パワーアップの出現確率(ブンレツを壊したときにも落ちる)
@@ -32,7 +32,7 @@
     bigCircleR: 20,        // この半径以上のボールは HP 2
     killPoints: { circle: 20, triangle: 30, sweeper: 30, diamond: 40, riser: 40, hexagon: 60 },
     chainWindow: 1.2,      // この秒数以内に次を壊すと撃破チェインが続く
-    maxChain: 8,           // 撃破点にかかる倍率の上限
+    maxChain: 5,           // 撃破点にかかる倍率の上限
     blastR: 46,            // 誘爆: 壊れた図形のまわりこの距離にいる図形に1ダメージ
     closeDist: 110,        // 自機からこの距離以内で壊すと「ギリギリ撃破」で点が2倍
     dropCoin: 0.12,        // 壊したときにコインを落とす確率
@@ -52,9 +52,9 @@
     stickDeadZone: 0.15,   // スティックの遊び(この割合以下は止まる)
     warnTime: 0.6,         // 速い障害物と壁の予告表示の秒数
     ranks: [               // スコアに応じた評価(しきい値は仮)
-      { min: 3000, label: 'S', color: '#ffe066' },
-      { min: 1800, label: 'A', color: '#ff8fd8' },
-      { min: 900, label: 'B', color: '#4fd1ff' },
+      { min: 3500, label: 'S', color: '#ffe066' },
+      { min: 2000, label: 'A', color: '#ff8fd8' },
+      { min: 1000, label: 'B', color: '#4fd1ff' },
       { min: 0, label: 'C', color: '#9aa3c7' },
     ],
   };
@@ -570,7 +570,9 @@
     state.score += pts;
     burst(o.x, o.y, COLORS[o.kind] || COLORS.circle, 18, 200);
     const label = close ? `ギリギリ +${pts}` : state.chain > 1 ? `x${state.chain} +${pts}` : `+${pts}`;
-    popup(o.x, o.y - 10, label, close ? '#ff8fd8' : state.chain > 1 ? COLORS.coin : COLORS.text, close || state.chain > 3 ? 16 : 14);
+    // 誘爆で同時に壊れたときは、点数表示が重ならないよう上にずらす
+    const lift = cause === 'blast' ? (state.chain - 1) * 14 : 0;
+    popup(o.x, o.y - 10 - lift, label, close ? '#ff8fd8' : state.chain > 1 ? COLORS.coin : COLORS.text, close || state.chain > 3 ? 16 : 14);
     sfx.explode(state.chain);
     state.shake = Math.max(state.shake, 0.08);
     let extra = [];
