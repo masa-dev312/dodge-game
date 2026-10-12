@@ -28,6 +28,8 @@ interface Shape {
   nearDone?: boolean;
   /** あと何発で壊れるか */
   hp?: number;
+  /** 最初の HP(残りの HP を表示するため) */
+  maxHp?: number;
   /** 弾が当たった直後の光る時間(秒) */
   hitT?: number;
 }
