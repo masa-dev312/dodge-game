@@ -1,0 +1,46 @@
+html, body {
+  margin: 0;
+  height: 100%;
+  background: #0b0d17;
+  overflow: hidden;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#stage {
+  position: relative;
+  background: #11142a;
+}
+canvas {
+  display: block;
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+/* 3D描画が使えないときは #game だけで背景まで描く */
+#world {
+  background: #11142a;
+}
+#controls {
+  position: fixed;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 6px;
+}
+#controls button {
+  min-width: 40px;
+  height: 36px;
+  font-size: 18px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  border: 0;
+  border-radius: 8px;
+  padding: 0 8px;
+  cursor: pointer;
+}
