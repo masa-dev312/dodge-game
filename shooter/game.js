@@ -45,8 +45,8 @@
         maxCombo: 5,
         levelSeconds: 10, // この秒数ごとにレベルが上がり、新しい図形が1種類増える
         playerMinY: 0.4, // 自機が上に動ける限界(画面の高さに対する割合)
-        stickRadius: 50, // スマホのスティックをいっぱいに倒したとみなす距離
-        stickDeadZone: 0.15, // スティックの遊び(この割合以下は止まる)
+        dragGain: 1.5, // スマホ: 指を動かした距離の何倍だけ自機が動くか
+        dragMaxSpeed: 1100, // スマホ: 自機が1秒に動ける最大の距離(px)。急に飛ばないようにする
         warnTime: 0.6, // 速い障害物と壁の予告表示の秒数
         ranks: [
             { min: 3500, label: 'S', color: '#ffe066' },
@@ -270,8 +270,9 @@
         ArrowUp: 'up', w: 'up', W: 'up',
         ArrowDown: 'down', s: 'down', S: 'down',
     };
-    // スマホ: 指を置いた場所を中心にした「見えないスティック」。最初の1本の指だけを使う
-    const stick = { id: null, ox: 0, oy: 0, x: 0, y: 0 };
+    // スマホ: 指を動かした分だけ自機が動く(相対ドラッグ)。指は画面のどこに置いてもよいので、
+    // 自機の下や横に置けば、指で自機や障害物が隠れない。最初の1本の指だけを使う
+    const stick = { id: null, x: 0, y: 0, dx: 0, dy: 0 };
     window.addEventListener('keydown', (e) => {
         const dir = KEYMAP[e.key];
         if (dir) {
@@ -304,7 +305,7 @@
         const rect = canvas.getBoundingClientRect();
         return { x: (e.clientX - rect.left) / rect.width * W, y: (e.clientY - rect.top) / rect.height * H };
     }
-    function releaseStick() { stick.id = null; }
+    function releaseStick() { stick.id = null; stick.dx = stick.dy = 0; }
     window.addEventListener('pointerdown', (e) => {
         if (state.scene === 'title' || state.scene === 'over') {
             start();
@@ -318,13 +319,17 @@
             return;
         const g = toGame(e);
         stick.id = e.pointerId;
-        stick.ox = stick.x = g.x;
-        stick.oy = stick.y = g.y;
+        stick.x = g.x;
+        stick.y = g.y;
+        stick.dx = stick.dy = 0;
     });
     window.addEventListener('pointermove', (e) => {
         if (e.pointerId !== stick.id)
             return;
         const g = toGame(e);
+        // 動いた分をためておき、movePlayer で自機に足す
+        stick.dx += (g.x - stick.x) * TUNE.dragGain;
+        stick.dy += (g.y - stick.y) * TUNE.dragGain;
         stick.x = g.x;
         stick.y = g.y;
     });
@@ -341,7 +346,7 @@
         keys.left = keys.right = keys.up = keys.down = false;
         releaseStick();
     });
-    // 移動方向を {x, y} で返す。長さは 0〜1(スティックは倒した量に比例)
+    // キーでの移動方向を {x, y} で返す。長さは 0〜1
     function inputDir() {
         let x = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
         let y = (keys.down ? 1 : 0) - (keys.up ? 1 : 0);
@@ -349,16 +354,18 @@
             x *= Math.SQRT1_2;
             y *= Math.SQRT1_2;
         } // 斜めが速くならないように
-        if (stick.id !== null) {
-            const dx = stick.x - stick.ox, dy = stick.y - stick.oy;
-            const len = Math.hypot(dx, dy);
-            const amount = Math.min(1, len / TUNE.stickRadius);
-            if (amount > TUNE.stickDeadZone && len > 0) {
-                x = dx / len * amount;
-                y = dy / len * amount;
-            }
-        }
         return { x, y };
+    }
+    // 指でためた移動量のうち、このフレームで動かす分を取り出す
+    function takeDrag(dt) {
+        const len = Math.hypot(stick.dx, stick.dy);
+        if (len === 0)
+            return { x: 0, y: 0 };
+        const k = Math.min(1, (TUNE.dragMaxSpeed * dt) / len);
+        const m = { x: stick.dx * k, y: stick.dy * k };
+        stick.dx -= m.x;
+        stick.dy -= m.y;
+        return m;
     }
     function togglePause() {
         if (state.scene === 'play') {
@@ -741,11 +748,20 @@
         const p = state.player;
         const half = TUNE.playerSize / 2;
         const dir = inputDir();
-        p.x += dir.x * TUNE.playerSpeed * dt;
-        p.y += dir.y * TUNE.playerSpeed * dt;
+        const drag = takeDrag(dt);
+        const ox = p.x;
+        p.x += dir.x * TUNE.playerSpeed * dt + drag.x;
+        p.y += dir.y * TUNE.playerSpeed * dt + drag.y;
         p.x = Math.max(half, Math.min(W - half, p.x));
         p.y = Math.max(H * TUNE.playerMinY, Math.min(H - half - 6, p.y));
-        p.tilt += (dir.x * 0.25 - p.tilt) * Math.min(1, dt * 12);
+        // 画面の端で止まった分は捨てる(端で指を動かし続けても、戻すときに遅れないように)
+        if (p.x === half || p.x === W - half)
+            stick.dx = 0;
+        if (p.y === H * TUNE.playerMinY || p.y === H - half - 6)
+            stick.dy = 0;
+        // 傾きは実際に動いた横の速さから決める
+        const vx = dt > 0 ? (p.x - ox) / dt / TUNE.playerSpeed : 0;
+        p.tilt += (Math.max(-1, Math.min(1, vx)) * 0.25 - p.tilt) * Math.min(1, dt * 12);
         state.trail.push({ x: p.x, y: p.y, life: 0.25 });
     }
     function moveThings(dt) {
@@ -1011,18 +1027,33 @@
         ctx.shadowBlur = 18;
         ctx.fillStyle = color;
         if (o.kind === 'power') {
-            // 回る虹色の星
+            // 3方向に広がる虹色の矢印(弾が3方向に出ることを形で表す)
+            const sway = Math.sin(rot) * 0.12;
+            const bx = o.x, by = o.y + o.r * 0.55;
+            ctx.lineCap = 'round';
+            [-0.6, 0, 0.6].forEach((a, i) => {
+                const ang = a + sway;
+                ctx.save();
+                ctx.translate(bx, by);
+                ctx.rotate(ang);
+                const c = rainbow(now, i * 70);
+                ctx.strokeStyle = c;
+                ctx.fillStyle = c;
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.moveTo(0, 0);
+                ctx.lineTo(0, -o.r * 1.0);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(0, -o.r * 1.55);
+                ctx.lineTo(o.r * 0.42, -o.r * 0.9);
+                ctx.lineTo(-o.r * 0.42, -o.r * 0.9);
+                ctx.closePath();
+                ctx.fill();
+                ctx.restore();
+            });
             ctx.beginPath();
-            for (let i = 0; i < 10; i++) {
-                const a = rot + (i / 10) * Math.PI * 2 - Math.PI / 2;
-                const rr = i % 2 === 0 ? o.r * 1.2 : o.r * 0.55;
-                const px = o.x + Math.cos(a) * rr, py = o.y + Math.sin(a) * rr;
-                if (i === 0)
-                    ctx.moveTo(px, py);
-                else
-                    ctx.lineTo(px, py);
-            }
-            ctx.closePath();
+            ctx.arc(bx, by, o.r * 0.28, 0, Math.PI * 2);
             ctx.fill();
         }
         else if (o.kind === 'coin') {
@@ -1036,12 +1067,18 @@
             ctx.fillRect(o.x - 1.5 * sx, o.y - o.r * 0.5, 3 * sx, o.r);
         }
         else if (o.kind === 'shield') {
-            ctx.globalAlpha *= 0.45;
-            polygon(o.x, o.y, o.r, 6, rot * 0.5);
+            // 盾の形(上が平らで、下がとがる)
+            const r = o.r * 1.1, sx = Math.cos(Math.sin(rot) * 0.5);
+            ctx.beginPath();
+            ctx.moveTo(o.x - r * 0.85 * sx, o.y - r * 0.9);
+            ctx.lineTo(o.x + r * 0.85 * sx, o.y - r * 0.9);
+            ctx.lineTo(o.x + r * 0.85 * sx, o.y - r * 0.15);
+            ctx.quadraticCurveTo(o.x + r * 0.8 * sx, o.y + r * 0.6, o.x, o.y + r * 1.05);
+            ctx.quadraticCurveTo(o.x - r * 0.8 * sx, o.y + r * 0.6, o.x - r * 0.85 * sx, o.y - r * 0.15);
+            ctx.closePath();
             ctx.fill();
-            ctx.globalAlpha /= 0.45;
-            ctx.strokeStyle = color;
-            ctx.lineWidth = 3;
+            ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+            ctx.lineWidth = 1.5;
             ctx.stroke();
             // 十字のしるし
             ctx.shadowBlur = 0;
@@ -1091,23 +1128,13 @@
             ctx.fill();
         }
     }
-    // 障害物の残り HP と、アイテムの名前を図形の近くに出す(3Dでは物体が見えている位置に合わせる)
+    // 障害物の残り HP を図形の上に出す(3Dでは物体が見えている位置に合わせる)。アイテムは形で見分けるので文字は出さない
     function drawMarkers(three) {
-        const now = performance.now() / 1000;
         for (const o of state.things) {
             if (o.kind === 'wall')
                 continue;
-            if (isItem(o.kind)) {
-                if (o.kind === 'coin')
-                    continue;
-                // 3Dでは床の輪より手前(画面の下)に出す
-                const at = three ? three.project(o.x, o.y + o.r * 2.2, 0) : { x: o.x, y: o.y + o.r * 2 };
-                const name = o.kind === 'shield' ? 'シールド' : '3方向';
-                const a = 0.8 + Math.sin(now * 6) * 0.2;
-                text(name, at.x + 1, at.y + 9, 11, 'rgba(5,6,15,0.9)', 'center', a);
-                text(name, at.x, at.y + 8, 11, o.kind === 'power' ? rainbow(now) : COLORS[o.kind], 'center', a);
+            if (isItem(o.kind))
                 continue;
-            }
             const max = o.maxHp ?? o.hp ?? 1;
             const hp = o.hp ?? 1;
             if (max <= 1 || hp <= 0)
@@ -1322,7 +1349,7 @@
             drawShape({ kind: k, x: cx - 34, y: 600, r: 7, rot: now * 2 }, 1);
             text(name, cx + 8, 600, 12, COLORS.text);
         });
-        text('PC: 矢印キー / WASD   スマホ: 指を置いてなぞる', W / 2, 628, 11, COLORS.sub);
+        text('PC: 矢印キー / WASD   スマホ: 好きな所をなぞる', W / 2, 628, 11, COLORS.sub);
     }
     function drawHud() {
         // 自機が動ける範囲の上端をうっすら示す(3D描画では床に線を引く)
@@ -1353,21 +1380,14 @@
             ctx.fillStyle = COLORS.coin;
             ctx.fillRect(W / 2 - 50, y + 12, 100 * Math.max(0, state.chainTimer / TUNE.chainWindow), 3);
         }
-        // 指で操作中はスティックを表示する
+        // 指で操作中は、指の位置に小さな輪だけを出す(自機の上には何も重ねない)
         if (stick.id !== null) {
-            const dx = stick.x - stick.ox, dy = stick.y - stick.oy;
-            const len = Math.hypot(dx, dy);
-            const k = len > TUNE.stickRadius ? TUNE.stickRadius / len : 1;
             ctx.save();
-            ctx.strokeStyle = 'rgba(79,209,255,0.35)';
+            ctx.strokeStyle = 'rgba(79,209,255,0.3)';
             ctx.lineWidth = 2;
             ctx.beginPath();
-            ctx.arc(stick.ox, stick.oy, TUNE.stickRadius, 0, Math.PI * 2);
+            ctx.arc(stick.x, stick.y, 26, 0, Math.PI * 2);
             ctx.stroke();
-            ctx.fillStyle = 'rgba(79,209,255,0.35)';
-            ctx.beginPath();
-            ctx.arc(stick.ox + dx * k, stick.oy + dy * k, 18, 0, Math.PI * 2);
-            ctx.fill();
             ctx.restore();
         }
     }

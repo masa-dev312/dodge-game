@@ -14,6 +14,19 @@ const COLORS = {
 };
 const ITEMS = ['coin', 'shield', 'power'];
 const isItem = (k) => k === 'coin' || k === 'shield' || k === 'power';
+// シールド: 盾の形の板(上が平らで、下がとがる)。表がカメラ側を向くよう傾ける
+function shieldGeometry() {
+    const sh = new THREE.Shape();
+    sh.moveTo(-0.85, 0.9);
+    sh.lineTo(0.85, 0.9);
+    sh.lineTo(0.85, 0.15);
+    sh.quadraticCurveTo(0.8, -0.6, 0, -1.05);
+    sh.quadraticCurveTo(-0.8, -0.6, -0.85, 0.15);
+    sh.closePath();
+    const g = new THREE.ExtrudeGeometry(sh, { depth: 0.22, bevelEnabled: true, bevelThickness: 0.06, bevelSize: 0.06, bevelSegments: 2 });
+    g.translate(0, 0, -0.11);
+    return g.rotateX(-0.9);
+}
 // 中心ほど明るい丸い光。加算合成の板に貼って、アイテムの光のにじみにする
 function glowTexture() {
     const c = document.createElement('canvas');
@@ -133,8 +146,8 @@ function init() {
         diamond: new THREE.OctahedronGeometry(1.15),
         hexagon: new THREE.CylinderGeometry(1, 1, 1, 6),
         coin: new THREE.CylinderGeometry(1, 1, 0.22, 24).rotateX(0.6), // 表がカメラ側を向くよう傾ける
-        shield: new THREE.TorusGeometry(1, 0.18, 8, 6).rotateX(-0.98),
-        power: new THREE.DodecahedronGeometry(1.05),
+        shield: shieldGeometry(),
+        power: new THREE.SphereGeometry(0.42, 16, 12), // 3方向: 真ん中の玉。矢じりは makeThing で付ける
         box: new THREE.BoxGeometry(1, 1, 1),
     };
     const shadowGeo = new THREE.CircleGeometry(1, 24).rotateX(-Math.PI / 2);
@@ -148,6 +161,9 @@ function init() {
         spikeDirs.push(new THREE.Vector3(Math.cos(a) * rr, yy, Math.sin(a) * rr));
     }
     const up = new THREE.Vector3(0, 1, 0);
+    const xAxis = new THREE.Vector3(1, 0, 0);
+    const crossMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    const arrowGeo = new THREE.ConeGeometry(0.55, 1.1, 4).rotateX(-Math.PI / 2); // 奥(-Z)を向く
     function makeThing(o) {
         const g = new THREE.Group();
         const extras = []; // g とは別に床の高さに置くもの
@@ -167,6 +183,31 @@ function init() {
             g.add(core);
             if (isItem(o.kind)) {
                 const f = fx[o.kind];
+                if (o.kind === 'shield') {
+                    // 盾の表に白い十字
+                    for (const [w, h] of [[0.22, 1.1], [1.0, 0.22]]) {
+                        const bar = new THREE.Mesh(geos.box, crossMat);
+                        bar.scale.set(w, h, 0.05);
+                        bar.position.set(0, 0.05, 0.2);
+                        bar.position.applyAxisAngle(xAxis, -0.9);
+                        bar.rotation.x = -0.9;
+                        core.add(bar);
+                    }
+                }
+                else if (o.kind === 'power') {
+                    // 3方向に広がる矢じり(弾が3方向に出ることを形で表す)
+                    for (const a of [-0.75, 0, 0.75]) {
+                        const arrow = new THREE.Mesh(arrowGeo, mats.power);
+                        arrow.position.set(Math.sin(a) * 1.55, 0, -Math.cos(a) * 1.55);
+                        arrow.rotation.y = -a;
+                        core.add(arrow);
+                        const shaft = new THREE.Mesh(geos.box, mats.power);
+                        shaft.scale.set(0.2, 0.2, 1.1);
+                        shaft.position.set(Math.sin(a) * 0.65, 0, -Math.cos(a) * 0.65);
+                        shaft.rotation.y = -a;
+                        core.add(shaft);
+                    }
+                }
                 const glow = new THREE.Sprite(f.glow);
                 g.add(glow);
                 const sparks = [];
@@ -240,12 +281,11 @@ function init() {
             m.rotation.y = rot;
         else if (o.kind === 'circle')
             m.rotation.y = rot;
-        else if (o.kind === 'coin' || o.kind === 'shield')
+        else if (o.kind === 'coin')
             m.rotation.y = rot;
-        else if (o.kind === 'power') {
-            m.rotation.y = rot;
-            m.rotation.x = rot * 0.7;
-        }
+        // シールドと3方向は形が分かるよう、正面(矢じりは奥)を向けたまま少しだけゆらす
+        else if (o.kind === 'shield' || o.kind === 'power')
+            m.rotation.y = Math.sin(rot) * 0.35;
         else if (o.kind === 'sweeper')
             m.rotation.y = o.vx !== undefined && o.vx < 0 ? Math.PI : 0;
         sh.position.set(g.position.x, 0.02, g.position.z);
