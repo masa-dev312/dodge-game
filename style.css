@@ -1,0 +1,31 @@
+html, body {
+  margin: 0;
+  height: 100%;
+  background: #0b0d17;
+  overflow: hidden;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+canvas {
+  display: block;
+  background: #11142a;
+  image-rendering: auto;
+}
+#mute {
+  position: fixed;
+  top: 8px;
+  right: 8px;
+  font-size: 20px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  border: 0;
+  border-radius: 8px;
+  padding: 4px 8px;
+  cursor: pointer;
+}
