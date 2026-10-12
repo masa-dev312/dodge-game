@@ -28,7 +28,10 @@
     nearMissPoints: 5,     // ニアミス1回の基本点(コンボ倍率がかかる)
     comboWindow: 2.0,      // この秒数以内に次のニアミスでコンボ継続
     maxCombo: 5,
-    levelSeconds: 15,      // この秒数ごとにレベルが上がる
+    levelSeconds: 10,      // この秒数ごとにレベルが上がり、新しい図形が1種類増える
+    playerMinY: 0.4,       // 自機が上に動ける限界(画面の高さに対する割合)
+    stickRadius: 50,       // スマホのスティックをいっぱいに倒したとみなす距離
+    stickDeadZone: 0.15,   // スティックの遊び(この割合以下は止まる)
     warnTime: 0.6,         // 速い障害物と壁の予告表示の秒数
     ranks: [               // スコアに応じた評価(しきい値は仮)
       { min: 1000, label: 'S', color: '#ffe066' },
@@ -47,6 +50,8 @@
     diamond: '#c77dff',
     wall: '#ff7b54',
     hexagon: '#4dffd2',
+    sweeper: '#ff6bd6',
+    riser: '#7cf06a',
     coin: '#ffe066',
     text: '#ffffff',
     sub: '#9aa3c7',
@@ -56,9 +61,11 @@
   // 図形図鑑(タイトルとレベルアップ表示で使う)
   const SHAPES = [
     { kind: 'circle', name: 'ボール', desc: 'まっすぐ落ちる', from: 0 },
-    { kind: 'triangle', name: 'トゲ', desc: '速い。上に予告が出る', from: 15 },
+    { kind: 'triangle', name: 'トゲ', desc: '速い。上に予告が出る', from: 10 },
+    { kind: 'sweeper', name: 'ヨコギリ', desc: '横から飛んでくる', from: 20 },
     { kind: 'diamond', name: 'ゆらゆら', desc: '左右にゆれる', from: 30 },
-    { kind: 'wall', name: 'カベ', desc: 'すき間を通る', from: 45 },
+    { kind: 'wall', name: 'カベ', desc: 'すき間を通る', from: 40 },
+    { kind: 'riser', name: 'ツキアゲ', desc: '下から突き上げる', from: 50 },
     { kind: 'hexagon', name: 'ブンレツ', desc: '途中で2つに割れる', from: 60 },
   ];
 
@@ -201,12 +208,18 @@
   }
 
   // ---- 入力 ----
-  const keys = { left: false, right: false };
-  const touches = new Map(); // pointerId -> 'left' | 'right'
+  const keys = { left: false, right: false, up: false, down: false };
+  const KEYMAP = {
+    ArrowLeft: 'left', a: 'left', A: 'left',
+    ArrowRight: 'right', d: 'right', D: 'right',
+    ArrowUp: 'up', w: 'up', W: 'up',
+    ArrowDown: 'down', s: 'down', S: 'down',
+  };
+  // スマホ: 指を置いた場所を中心にした「見えないスティック」。最初の1本の指だけを使う
+  const stick = { id: null, ox: 0, oy: 0, x: 0, y: 0 };
 
   window.addEventListener('keydown', (e) => {
-    if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') keys.left = true;
-    if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') keys.right = true;
+    if (KEYMAP[e.key]) { keys[KEYMAP[e.key]] = true; e.preventDefault(); }
     if (e.key === 'p' || e.key === 'P' || e.key === 'Escape') { togglePause(); return; }
     if (e.key === 'm' || e.key === 'M') { toggleMute(); return; }
     if (e.key === ' ' || e.key === 'Enter') {
@@ -216,23 +229,31 @@
     }
   });
   window.addEventListener('keyup', (e) => {
-    if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') keys.left = false;
-    if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') keys.right = false;
+    if (KEYMAP[e.key]) keys[KEYMAP[e.key]] = false;
   });
 
-  function sideOf(e) {
+  // 画面上の位置をゲームの座標(360x640)に変換する
+  function toGame(e) {
     const rect = canvas.getBoundingClientRect();
-    return (e.clientX - rect.left) < rect.width / 2 ? 'left' : 'right';
+    return { x: (e.clientX - rect.left) / rect.width * W, y: (e.clientY - rect.top) / rect.height * H };
   }
+  function releaseStick() { stick.id = null; }
   window.addEventListener('pointerdown', (e) => {
     if (state.scene === 'title' || state.scene === 'over') { start(); return; }
     if (state.scene === 'paused') { togglePause(); return; }
-    touches.set(e.pointerId, sideOf(e));
+    if (stick.id !== null) return;
+    const g = toGame(e);
+    stick.id = e.pointerId;
+    stick.ox = stick.x = g.x;
+    stick.oy = stick.y = g.y;
   });
   window.addEventListener('pointermove', (e) => {
-    if (touches.has(e.pointerId)) touches.set(e.pointerId, sideOf(e));
+    if (e.pointerId !== stick.id) return;
+    const g = toGame(e);
+    stick.x = g.x;
+    stick.y = g.y;
   });
-  const release = (e) => touches.delete(e.pointerId);
+  const release = (e) => { if (e.pointerId === stick.id) releaseStick(); };
   window.addEventListener('pointerup', release);
   window.addEventListener('pointercancel', release);
 
@@ -240,18 +261,30 @@
   document.addEventListener('visibilitychange', () => {
     if (document.hidden && state.scene === 'play') togglePause();
   });
-  window.addEventListener('blur', () => { keys.left = keys.right = false; touches.clear(); });
+  window.addEventListener('blur', () => {
+    keys.left = keys.right = keys.up = keys.down = false;
+    releaseStick();
+  });
 
+  // 移動方向を {x, y} で返す。長さは 0〜1(スティックは倒した量に比例)
   function inputDir() {
-    let l = keys.left, r = keys.right;
-    for (const side of touches.values()) {
-      if (side === 'left') l = true; else r = true;
+    let x = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
+    let y = (keys.down ? 1 : 0) - (keys.up ? 1 : 0);
+    if (x && y) { x *= Math.SQRT1_2; y *= Math.SQRT1_2; } // 斜めが速くならないように
+    if (stick.id !== null) {
+      const dx = stick.x - stick.ox, dy = stick.y - stick.oy;
+      const len = Math.hypot(dx, dy);
+      const amount = Math.min(1, len / TUNE.stickRadius);
+      if (amount > TUNE.stickDeadZone && len > 0) {
+        x = dx / len * amount;
+        y = dy / len * amount;
+      }
     }
-    return (r ? 1 : 0) - (l ? 1 : 0);
+    return { x, y };
   }
 
   function togglePause() {
-    if (state.scene === 'play') { setScene('paused'); touches.clear(); }
+    if (state.scene === 'play') { setScene('paused'); releaseStick(); }
     else if (state.scene === 'paused') { state.scene = 'play'; refreshButtons(); }
   }
 
@@ -268,7 +301,7 @@
     state.player.y = H - 70;
     state.player.tilt = 0;
     state.player.shield = false;
-    touches.clear();
+    releaseStick();
     setScene('countdown');
     sfx.count();
   }
@@ -327,6 +360,25 @@
       const vy = v * 0.7;
       // 予告表示の時間ぶん画面の上から始める
       state.things.push({ kind: 'wall', y: -16 - vy * TUNE.warnTime, h: 16, gapX: 20 + Math.random() * (W - gap - 40), gap, vy });
+      return;
+    }
+    const zoneTop = H * TUNE.playerMinY;
+    if (kind === 'sweeper') {
+      // 自機が動ける範囲の高さを、左右どちらかから横切る
+      const dir = Math.random() < 0.5 ? 1 : -1;
+      const vx = dir * v * 1.1;
+      const r = 14;
+      const x = dir > 0 ? -r - Math.abs(vx) * TUNE.warnTime : W + r + Math.abs(vx) * TUNE.warnTime;
+      const y = zoneTop + 20 + Math.random() * (H - zoneTop - 50);
+      state.things.push({ kind, x, y, r, vx, vy: 0, rot: 0, spin: 0 });
+      return;
+    }
+    if (kind === 'riser') {
+      // 画面の下から突き上げる。自機の近くを狙う
+      const r = 14;
+      const vy = -v * 0.9;
+      const x = Math.max(r, Math.min(W - r, state.player.x + (Math.random() - 0.5) * 140));
+      state.things.push({ kind, x, y: H + r + Math.abs(vy) * TUNE.warnTime, r, vx: 0, vy, rot: 0, spin: 0 });
       return;
     }
     const r = kind === 'circle' ? 13 + Math.random() * 11 : kind === 'hexagon' ? 18 : 14;
@@ -428,9 +480,11 @@
     const p = state.player;
     const half = TUNE.playerSize / 2;
     const dir = inputDir();
-    p.x += dir * TUNE.playerSpeed * dt;
+    p.x += dir.x * TUNE.playerSpeed * dt;
+    p.y += dir.y * TUNE.playerSpeed * dt;
     p.x = Math.max(half, Math.min(W - half, p.x));
-    p.tilt += (dir * 0.25 - p.tilt) * Math.min(1, dt * 12);
+    p.y = Math.max(H * TUNE.playerMinY, Math.min(H - half - 6, p.y));
+    p.tilt += (dir.x * 0.25 - p.tilt) * Math.min(1, dt * 12);
     state.trail.push({ x: p.x, y: p.y, life: 0.25 });
   }
 
@@ -458,8 +512,13 @@
         o.vx = -o.vx;
         o.x = Math.max(o.r, Math.min(W - o.r, o.x));
       }
-      const top = o.kind === 'wall' ? o.y : o.y - o.r;
-      if (top < H + 40) out.push(o);
+      // 進む向きに画面の外へ出たものだけ消す(予告のため画面外から出発するものがあるため)
+      const r = o.kind === 'wall' ? 0 : o.r;
+      const gone =
+        (o.vy > 0 && o.y - r > H + 40) ||
+        (o.vy < 0 && o.y + r < -40) ||
+        (o.kind === 'sweeper' && ((o.vx > 0 && o.x - r > W + 40) || (o.vx < 0 && o.x + r < -40)));
+      if (!gone) out.push(o);
     }
     state.things = out;
   }
@@ -595,6 +654,24 @@
       ctx.lineTo(o.x + 3, o.y);
       ctx.lineTo(o.x - 2, o.y + o.r);
       ctx.stroke();
+    } else if (o.kind === 'sweeper') {
+      // 進む向きを指す矢じり
+      const d = o.vx >= 0 ? 1 : -1;
+      ctx.beginPath();
+      ctx.moveTo(o.x + d * o.r * 1.3, o.y);
+      ctx.lineTo(o.x - d * o.r, o.y - o.r);
+      ctx.lineTo(o.x - d * o.r * 0.4, o.y);
+      ctx.lineTo(o.x - d * o.r, o.y + o.r);
+      ctx.closePath();
+      ctx.fill();
+    } else if (o.kind === 'riser') {
+      // 上向きのトゲ
+      ctx.beginPath();
+      ctx.moveTo(o.x, o.y - o.r * 1.2);
+      ctx.lineTo(o.x + o.r, o.y + o.r);
+      ctx.lineTo(o.x - o.r, o.y + o.r);
+      ctx.closePath();
+      ctx.fill();
     } else if (o.kind === 'coin') {
       // 回転して見えるよう横幅を変える
       const sx = Math.abs(Math.cos(rot)) * 0.8 + 0.2;
@@ -645,6 +722,23 @@
         ctx.closePath();
         ctx.fill();
         text('!', o.x, 40, 14, COLORS.warn);
+      } else if (o.kind === 'sweeper' && (o.x + o.r < 0 || o.x - o.r > W)) {
+        const left = o.x < 0;
+        const ex = left ? 6 : W - 6;
+        const d = left ? 1 : -1;
+        ctx.fillStyle = blink ? COLORS.warn : 'rgba(255,77,77,0.4)';
+        ctx.beginPath();
+        ctx.moveTo(ex, o.y - 9); ctx.lineTo(ex + d * 16, o.y); ctx.lineTo(ex, o.y + 9);
+        ctx.closePath();
+        ctx.fill();
+        text('!', ex + d * 26, o.y, 14, COLORS.warn);
+      } else if (o.kind === 'riser' && o.y - o.r > H) {
+        ctx.fillStyle = blink ? COLORS.warn : 'rgba(255,77,77,0.4)';
+        ctx.beginPath();
+        ctx.moveTo(o.x, H - 26); ctx.lineTo(o.x - 9, H - 10); ctx.lineTo(o.x + 9, H - 10);
+        ctx.closePath();
+        ctx.fill();
+        text('!', o.x, H - 40, 14, COLORS.warn);
       } else if (o.kind === 'wall' && o.y < 0) {
         ctx.fillStyle = blink ? 'rgba(255,77,77,0.55)' : 'rgba(255,77,77,0.2)';
         ctx.fillRect(0, 4, o.gapX, 4);
@@ -738,12 +832,12 @@
       text(logo[i], x + 3, y + 3, 52, 'rgba(79,209,255,0.35)');
       text(logo[i], x, y, 52, COLORS.text);
     }
-    text('落ちてくる図形をよけつづけろ！', W / 2, 205, 15, COLORS.sub);
+    text('せまりくる図形をよけつづけろ！', W / 2, 205, 15, COLORS.sub);
 
-    // デモ: 自機が左右にゆれる
+    // デモ: 自機が8の字に動く
     state.player.x = W / 2 + Math.sin(now * 1.6) * 60;
     state.player.tilt = Math.cos(now * 1.6) * 0.2;
-    state.player.y = 262;
+    state.player.y = 262 + Math.sin(now * 3.2) * 12;
     drawPlayer(1);
 
     button('スタート', 335, COLORS.player);
@@ -755,8 +849,10 @@
     ctx.fill();
     text('図形ずかん', W / 2, 428, 13, COLORS.sub);
     SHAPES.forEach((s, i) => {
-      const col = i % 3, row = Math.floor(i / 3);
-      const cx = 70 + col * 110 - (row === 1 ? -55 : 0);
+      // 1段目に4つ、2段目に3つ並べる
+      const row = i < 4 ? 0 : 1;
+      const col = row === 0 ? i : i - 4;
+      const cx = 24 + 78 * (col + 0.5) + (row === 1 ? 39 : 0);
       const cy = 465 + row * 58;
       if (s.kind === 'wall') {
         ctx.fillStyle = COLORS.wall;
@@ -775,23 +871,41 @@
       text(name, cx + 6, 600, 12, COLORS.text);
     });
 
-    text('PC: ← →  /  スマホ: 画面の左右をタッチ', W / 2, 628, 11, COLORS.sub);
+    text('PC: 矢印キー / WASD   スマホ: 指を置いてなぞる', W / 2, 628, 11, COLORS.sub);
   }
 
   function drawHud() {
+    // 自機が動ける範囲の上端をうっすら示す
+    ctx.save();
+    ctx.strokeStyle = 'rgba(79,209,255,0.12)';
+    ctx.setLineDash([6, 8]);
+    ctx.beginPath();
+    ctx.moveTo(0, H * TUNE.playerMinY - TUNE.playerSize / 2);
+    ctx.lineTo(W, H * TUNE.playerMinY - TUNE.playerSize / 2);
+    ctx.stroke();
+    ctx.restore();
     text(String(Math.floor(state.score)), W / 2, 36, 30);
     text(`LV ${state.level}`, 12, 20, 13, COLORS.sub, 'left');
     text(`${state.t.toFixed(1)}秒`, 12, 38, 13, COLORS.sub, 'left');
     if (state.combo > 1) {
       text(`コンボ x${state.combo}`, W / 2, 64, 14, '#ff8fd8', 'center', Math.min(1, state.comboTimer));
     }
-    // タッチ中の側をうっすら光らせる
-    for (const side of touches.values()) {
-      const g = ctx.createLinearGradient(side === 'left' ? 0 : W, 0, W / 2, 0);
-      g.addColorStop(0, 'rgba(79,209,255,0.15)');
-      g.addColorStop(1, 'rgba(79,209,255,0)');
-      ctx.fillStyle = g;
-      ctx.fillRect(side === 'left' ? 0 : W / 2, 0, W / 2, H);
+    // 指で操作中はスティックを表示する
+    if (stick.id !== null) {
+      const dx = stick.x - stick.ox, dy = stick.y - stick.oy;
+      const len = Math.hypot(dx, dy);
+      const k = len > TUNE.stickRadius ? TUNE.stickRadius / len : 1;
+      ctx.save();
+      ctx.strokeStyle = 'rgba(79,209,255,0.35)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(stick.ox, stick.oy, TUNE.stickRadius, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(79,209,255,0.35)';
+      ctx.beginPath();
+      ctx.arc(stick.ox + dx * k, stick.oy + dy * k, 18, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
     }
   }
 
@@ -904,7 +1018,7 @@
       ctx.fillRect(-20, -20, W + 40, H + 40);
     }
 
-    if (state.scene === 'play' || state.scene === 'paused' || state.scene === 'dying') drawHud();
+    if (state.scene === 'play' || state.scene === 'paused' || state.scene === 'dying' || state.scene === 'countdown') drawHud();
     for (const q of state.popups) text(q.str, q.x, q.y, q.size, q.color, 'center', Math.min(1, q.life * 2));
     drawBanner();
 
@@ -912,7 +1026,7 @@
       const n = 3 - Math.floor(state.sceneT);
       const f = state.sceneT % 1;
       text(String(n), W / 2, H * 0.4, 90 * (1.4 - f * 0.4), COLORS.text, 'center', 1 - f * 0.6);
-      text('左右に動いてよけよう', W / 2, H * 0.4 + 80, 15, COLORS.sub);
+      text('上下左右に動いてよけよう', W / 2, H * 0.4 + 80, 15, COLORS.sub);
     } else if (state.scene === 'paused') {
       ctx.fillStyle = 'rgba(5,6,15,0.6)';
       ctx.fillRect(0, 0, W, H);
@@ -935,5 +1049,5 @@
   requestAnimationFrame(loop);
 
   // 動作確認用
-  window.__dodge = { state, TUNE, start };
+  window.__dodge = { state, TUNE, start, stick };
 })();
