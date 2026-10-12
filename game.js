@@ -83,6 +83,12 @@
     try { localStorage.setItem(key, String(v)); } catch (e) { /* 保存できなくても続行 */ }
   }
 
+  // 書き換えられた値(負の数・巨大な数・文字列)はハイスコアとして使わない
+  function loadBest() {
+    const v = Math.floor(Number(load('dodge.best', 0)));
+    return Number.isFinite(v) && v >= 0 && v < 1e7 ? v : 0;
+  }
+
   // ---- 効果音(WebAudioで生成。素材ファイル不要) ----
   let audio = null;
   let muted = load('dodge.muted', '0') === '1';
@@ -121,21 +127,27 @@
     try { if (navigator.vibrate) navigator.vibrate(ms); } catch (e) { /* noop */ }
   }
 
+  // index.html が古いままキャッシュされていてボタンが無くても動くようにする
   function refreshButtons() {
-    muteBtn.textContent = muted ? '🔇' : '🔊';
-    pauseBtn.textContent = state.scene === 'paused' ? '▶' : 'Ⅱ';
-    pauseBtn.style.visibility = (state.scene === 'play' || state.scene === 'paused') ? 'visible' : 'hidden';
+    if (muteBtn) muteBtn.textContent = muted ? '🔇' : '🔊';
+    if (pauseBtn) {
+      pauseBtn.textContent = state.scene === 'paused' ? '▶' : 'Ⅱ';
+      pauseBtn.style.visibility = (state.scene === 'play' || state.scene === 'paused') ? 'visible' : 'hidden';
+    }
   }
   for (const btn of [muteBtn, pauseBtn]) {
-    btn.addEventListener('pointerdown', (e) => e.stopPropagation());
+    if (btn) btn.addEventListener('pointerdown', (e) => e.stopPropagation());
   }
-  muteBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
+  function toggleMute() {
     muted = !muted;
     save('dodge.muted', muted ? '1' : '0');
     refreshButtons();
+  }
+  if (muteBtn) muteBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleMute();
   });
-  pauseBtn.addEventListener('click', (e) => {
+  if (pauseBtn) pauseBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     togglePause();
   });
@@ -146,7 +158,7 @@
     sceneT: 0,       // 今のシーンに入ってからの秒数
     t: 0,
     score: 0,
-    best: Number(load('dodge.best', 0)) || 0,
+    best: loadBest(),
     newBest: false,
     level: 1,
     coins: 0,
@@ -196,7 +208,7 @@
     if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') keys.left = true;
     if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') keys.right = true;
     if (e.key === 'p' || e.key === 'P' || e.key === 'Escape') { togglePause(); return; }
-    if (e.key === 'm' || e.key === 'M') { muteBtn.click(); return; }
+    if (e.key === 'm' || e.key === 'M') { toggleMute(); return; }
     if (e.key === ' ' || e.key === 'Enter') {
       e.preventDefault();
       if (state.scene === 'paused') togglePause();
