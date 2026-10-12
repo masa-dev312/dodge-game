@@ -1,0 +1,19 @@
+{
+  "name": "dodge-game",
+  "private": true,
+  "description": "よけゲー / よけうち。TypeScript のソースは src/ にあり、ビルドした JavaScript を GitHub Pages でそのまま配信する",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p src/dodge && tsc -p src/shooter",
+    "typecheck": "tsc -p src/dodge --noEmit && tsc -p src/shooter --noEmit",
+    "lint": "eslint src",
+    "check": "npm run lint && npm run typecheck"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/three": "0.160.0",
+    "eslint": "10.12.0",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.71.1"
+  }
+}

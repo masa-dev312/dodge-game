@@ -1,0 +1,10 @@
+{
+  // よけうち。ビルドすると shooter/game.js / shooter/render3d.js ができる
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "../../shooter"
+  },
+  "include": ["*.ts"],
+  "exclude": []
+}
