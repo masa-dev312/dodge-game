@@ -55,19 +55,20 @@
             { min: 0, label: 'C', color: '#9aa3c7' },
         ],
     };
+    // 障害物は赤、橙、桃、紫、藍の「危ない色」、アイテムは金、緑、虹色にして、色だけでも見分けられるようにする
     const COLORS = {
         bg: '#11142a',
         player: '#4fd1ff',
-        shield: '#9cff8f',
+        shield: '#7dffa8',
         circle: '#ff5c7a',
-        triangle: '#ffb547',
+        triangle: '#ff8a3c',
         diamond: '#c77dff',
         wall: '#ff7b54',
-        hexagon: '#4dffd2',
+        hexagon: '#7d8bff',
         sweeper: '#ff6bd6',
-        riser: '#7cf06a',
+        riser: '#ff3b4e',
         coin: '#ffe066',
-        power: '#ff9d3c',
+        power: '#ffffff',
         bullet: '#bff4ff',
         text: '#ffffff',
         sub: '#9aa3c7',
@@ -661,6 +662,7 @@
                 continue;
             if (Math.hypot(q.x - o.x, q.y - o.y) > TUNE.blastR + q.r)
                 continue;
+            q.maxHp ??= q.hp;
             q.hp = (q.hp || 1) - 1;
             q.hitT = 0.08;
             if (q.hp <= 0)
@@ -721,6 +723,7 @@
             }
             if (!breakable(o) || !hitCircle(b.x, b.y, TUNE.bulletR, o))
                 continue;
+            o.maxHp ??= o.hp;
             o.hp = (o.hp || 1) - 1;
             o.hitT = 0.08;
             if (o.hp <= 0) {
@@ -896,73 +899,119 @@
         }
         ctx.closePath();
     }
-    function drawShape(o, alpha) {
-        const color = COLORS[o.kind];
-        ctx.save();
-        ctx.globalAlpha = alpha == null ? 1 : alpha;
-        ctx.shadowColor = color;
-        ctx.shadowBlur = 12;
-        ctx.fillStyle = color;
+    const isItem = (k) => k === 'coin' || k === 'shield' || k === 'power';
+    // 3方向アイテムの虹色
+    const rainbow = (now, shift = 0) => `hsl(${(now * 240 + shift) % 360}, 100%, 65%)`;
+    // 図形の輪郭だけを作る(塗りとふちの線で同じ形を使う)
+    function shapePath(o) {
         const rot = o.rot || 0;
+        ctx.beginPath();
         if (o.kind === 'circle') {
-            ctx.beginPath();
-            ctx.arc(o.x, o.y, o.r, 0, Math.PI * 2);
-            ctx.fill();
-            // つや
-            ctx.shadowBlur = 0;
-            ctx.fillStyle = 'rgba(255,255,255,0.35)';
-            ctx.beginPath();
-            ctx.arc(o.x - o.r * 0.35, o.y - o.r * 0.35, o.r * 0.3, 0, Math.PI * 2);
-            ctx.fill();
+            // トゲのついた機雷
+            for (let i = 0; i < 16; i++) {
+                const a = rot + (i / 16) * Math.PI * 2;
+                const rr = i % 2 === 0 ? o.r * 1.18 : o.r * 0.92;
+                const px = o.x + Math.cos(a) * rr, py = o.y + Math.sin(a) * rr;
+                if (i === 0)
+                    ctx.moveTo(px, py);
+                else
+                    ctx.lineTo(px, py);
+            }
+            ctx.closePath();
         }
         else if (o.kind === 'triangle') {
             // 下向きのトゲ
-            ctx.beginPath();
             ctx.moveTo(o.x, o.y + o.r * 1.2);
             ctx.lineTo(o.x - o.r, o.y - o.r);
             ctx.lineTo(o.x + o.r, o.y - o.r);
             ctx.closePath();
-            ctx.fill();
         }
         else if (o.kind === 'diamond') {
             polygon(o.x, o.y, o.r * 1.1, 4, rot);
-            ctx.fill();
         }
         else if (o.kind === 'hexagon') {
             polygon(o.x, o.y, o.r, 6, rot);
-            ctx.fill();
+        }
+        else if (o.kind === 'sweeper') {
+            // 進む向きを指す矢じり
+            const d = o.vx !== undefined && o.vx >= 0 ? 1 : -1;
+            ctx.moveTo(o.x + d * o.r * 1.3, o.y);
+            ctx.lineTo(o.x - d * o.r, o.y - o.r);
+            ctx.lineTo(o.x - d * o.r * 0.4, o.y);
+            ctx.lineTo(o.x - d * o.r, o.y + o.r);
+            ctx.closePath();
+        }
+        else if (o.kind === 'riser') {
+            // 上向きのトゲ
+            ctx.moveTo(o.x, o.y - o.r * 1.2);
+            ctx.lineTo(o.x + o.r, o.y + o.r);
+            ctx.lineTo(o.x - o.r, o.y + o.r);
+            ctx.closePath();
+        }
+    }
+    // 障害物: 光を抑え、黒いふちと内側の暗い影で「固くて危ないもの」に見せる
+    function drawObstacle(o, color) {
+        ctx.shadowColor = color;
+        ctx.shadowBlur = 6;
+        ctx.fillStyle = color;
+        shapePath(o);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        // 内側の影(下半分を暗く)
+        ctx.save();
+        shapePath(o);
+        ctx.clip();
+        const grd = ctx.createLinearGradient(o.x, o.y - o.r, o.x, o.y + o.r);
+        grd.addColorStop(0, 'rgba(255,255,255,0.28)');
+        grd.addColorStop(0.45, 'rgba(255,255,255,0)');
+        grd.addColorStop(1, 'rgba(0,0,0,0.45)');
+        ctx.fillStyle = grd;
+        ctx.fillRect(o.x - o.r * 1.5, o.y - o.r * 1.5, o.r * 3, o.r * 3);
+        ctx.restore();
+        ctx.strokeStyle = 'rgba(5,6,15,0.85)';
+        ctx.lineWidth = 2;
+        ctx.lineJoin = 'round';
+        shapePath(o);
+        ctx.stroke();
+        if (o.kind === 'hexagon') {
             // 割れ目
-            ctx.shadowBlur = 0;
             ctx.strokeStyle = COLORS.bg;
-            ctx.lineWidth = 2;
             ctx.beginPath();
             ctx.moveTo(o.x, o.y - o.r);
             ctx.lineTo(o.x + 3, o.y);
             ctx.lineTo(o.x - 2, o.y + o.r);
             ctx.stroke();
         }
-        else if (o.kind === 'sweeper') {
-            // 進む向きを指す矢じり
-            const d = o.vx !== undefined && o.vx >= 0 ? 1 : -1;
-            ctx.beginPath();
-            ctx.moveTo(o.x + d * o.r * 1.3, o.y);
-            ctx.lineTo(o.x - d * o.r, o.y - o.r);
-            ctx.lineTo(o.x - d * o.r * 0.4, o.y);
-            ctx.lineTo(o.x - d * o.r, o.y + o.r);
-            ctx.closePath();
-            ctx.fill();
-        }
-        else if (o.kind === 'riser') {
-            // 上向きのトゲ
-            ctx.beginPath();
-            ctx.moveTo(o.x, o.y - o.r * 1.2);
-            ctx.lineTo(o.x + o.r, o.y + o.r);
-            ctx.lineTo(o.x - o.r, o.y + o.r);
-            ctx.closePath();
-            ctx.fill();
-        }
-        else if (o.kind === 'power') {
-            // パワーアップ: 回る星
+    }
+    // アイテム: 光のにじみ、回る点線の輪、きらめきで「取ると得するもの」に見せる
+    function drawItem(o, color, now) {
+        const rot = o.rot || 0;
+        const pulse = 1 + Math.sin(now * 6 + o.x) * 0.12;
+        const halo = ctx.createRadialGradient(o.x, o.y, 0, o.x, o.y, o.r * 2.6 * pulse);
+        halo.addColorStop(0, color);
+        halo.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.globalAlpha *= 0.55;
+        ctx.fillStyle = halo;
+        ctx.beginPath();
+        ctx.arc(o.x, o.y, o.r * 2.6 * pulse, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+        ctx.save();
+        ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([4, 5]);
+        ctx.lineDashOffset = -now * 30;
+        ctx.beginPath();
+        ctx.arc(o.x, o.y, o.r * 1.75, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+        ctx.shadowColor = color;
+        ctx.shadowBlur = 18;
+        ctx.fillStyle = color;
+        if (o.kind === 'power') {
+            // 回る虹色の星
             ctx.beginPath();
             for (let i = 0; i < 10; i++) {
                 const a = rot + (i / 10) * Math.PI * 2 - Math.PI / 2;
@@ -983,17 +1032,56 @@
             ctx.ellipse(o.x, o.y, o.r * sx, o.r, 0, 0, Math.PI * 2);
             ctx.fill();
             ctx.shadowBlur = 0;
-            ctx.fillStyle = 'rgba(255,255,255,0.5)';
+            ctx.fillStyle = 'rgba(255,255,255,0.6)';
             ctx.fillRect(o.x - 1.5 * sx, o.y - o.r * 0.5, 3 * sx, o.r);
         }
         else if (o.kind === 'shield') {
-            ctx.strokeStyle = COLORS.shield;
-            ctx.lineWidth = 3;
+            ctx.globalAlpha *= 0.45;
             polygon(o.x, o.y, o.r, 6, rot * 0.5);
+            ctx.fill();
+            ctx.globalAlpha /= 0.45;
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 3;
             ctx.stroke();
-            ctx.globalAlpha *= 0.35;
+            // 十字のしるし
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(o.x - 1.5, o.y - o.r * 0.5, 3, o.r);
+            ctx.fillRect(o.x - o.r * 0.5, o.y - 1.5, o.r, 3);
+        }
+        ctx.shadowBlur = 0;
+        // きらめき
+        for (let i = 0; i < 3; i++) {
+            const a = now * 2.5 + i * (Math.PI * 2 / 3);
+            const tw = 0.5 + 0.5 * Math.sin(now * 9 + i * 2);
+            const px = o.x + Math.cos(a) * o.r * 1.75, py = o.y + Math.sin(a) * o.r * 1.75;
+            const k = 2 + tw * 2.5;
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.moveTo(px, py - k);
+            ctx.lineTo(px + k * 0.3, py);
+            ctx.lineTo(px, py + k);
+            ctx.lineTo(px - k * 0.3, py);
+            ctx.closePath();
+            ctx.fill();
+            ctx.beginPath();
+            ctx.moveTo(px - k, py);
+            ctx.lineTo(px, py + k * 0.3);
+            ctx.lineTo(px + k, py);
+            ctx.lineTo(px, py - k * 0.3);
+            ctx.closePath();
             ctx.fill();
         }
+    }
+    function drawShape(o, alpha) {
+        const now = performance.now() / 1000;
+        const color = o.kind === 'power' ? rainbow(now) : COLORS[o.kind];
+        ctx.save();
+        ctx.globalAlpha = alpha == null ? 1 : alpha;
+        if (isItem(o.kind))
+            drawItem(o, color, now);
+        else
+            drawObstacle(o, color);
         ctx.restore();
         if ((o.hitT ?? 0) > 0) {
             // 弾が当たった瞬間に白く光らせる
@@ -1001,6 +1089,37 @@
             ctx.beginPath();
             ctx.arc(o.x, o.y, o.r * 1.1, 0, Math.PI * 2);
             ctx.fill();
+        }
+    }
+    // 障害物の残り HP と、アイテムの名前を図形の近くに出す(3Dでは物体が見えている位置に合わせる)
+    function drawMarkers(three) {
+        const now = performance.now() / 1000;
+        for (const o of state.things) {
+            if (o.kind === 'wall')
+                continue;
+            if (isItem(o.kind)) {
+                if (o.kind === 'coin')
+                    continue;
+                // 3Dでは床の輪より手前(画面の下)に出す
+                const at = three ? three.project(o.x, o.y + o.r * 2.2, 0) : { x: o.x, y: o.y + o.r * 2 };
+                const name = o.kind === 'shield' ? 'シールド' : '3方向';
+                const a = 0.8 + Math.sin(now * 6) * 0.2;
+                text(name, at.x + 1, at.y + 9, 11, 'rgba(5,6,15,0.9)', 'center', a);
+                text(name, at.x, at.y + 8, 11, o.kind === 'power' ? rainbow(now) : COLORS[o.kind], 'center', a);
+                continue;
+            }
+            const max = o.maxHp ?? o.hp ?? 1;
+            const hp = o.hp ?? 1;
+            if (max <= 1 || hp <= 0)
+                continue;
+            const at = three ? three.project(o.x, o.y, (o.r / 20) * 2 + 0.7) : { x: o.x, y: o.y - o.r * 1.25 - 6 };
+            const gap = 6, w0 = at.x - ((max - 1) * gap) / 2;
+            for (let i = 0; i < max; i++) {
+                ctx.fillStyle = i < hp ? '#ffffff' : 'rgba(255,255,255,0.22)';
+                ctx.beginPath();
+                ctx.arc(w0 + i * gap, at.y, 2.2, 0, Math.PI * 2);
+                ctx.fill();
+            }
         }
     }
     function drawBullets() {
@@ -1177,7 +1296,7 @@
         ctx.fillStyle = 'rgba(255,255,255,0.05)';
         roundRect(24, 410, W - 48, 150, 12);
         ctx.fill();
-        text('図形ずかん', W / 2, 428, 13, COLORS.sub);
+        text('ぶつかるとアウト(撃って壊せる)', W / 2, 428, 12, COLORS.warn);
         SHAPES.forEach((s, i) => {
             // 1段目に4つ、2段目に3つ並べる
             const row = i < 4 ? 0 : 1;
@@ -1197,11 +1316,11 @@
             text(hp ? `HP ${hp}` : '壊せない', cx, cy + 33, 9, hp ? COLORS.sub : COLORS.warn);
         });
         const items = [['coin', 'コイン'], ['shield', 'シールド'], ['power', '3方向']];
-        text('アイテム', W / 2, 578, 12, COLORS.sub);
+        text('光っているのはアイテム。取ると得する', W / 2, 575, 12, COLORS.shield);
         items.forEach(([k, name], i) => {
             const cx = W / 2 - 105 + i * 105;
-            drawShape({ kind: k, x: cx - 26, y: 600, r: 9, rot: now * 2 }, 1);
-            text(name, cx + 6, 600, 12, COLORS.text);
+            drawShape({ kind: k, x: cx - 34, y: 600, r: 7, rot: now * 2 }, 1);
+            text(name, cx + 8, 600, 12, COLORS.text);
         });
         text('PC: 矢印キー / WASD   スマホ: 指を置いてなぞる', W / 2, 628, 11, COLORS.sub);
     }
@@ -1338,6 +1457,8 @@
             ctx.clearRect(0, 0, W, H);
             if (state.scene === 'title')
                 drawTitle();
+            else
+                drawMarkers(three);
         }
         else {
             ctx.setTransform(sx, 0, 0, sy, ox * sx, oy * sy);
@@ -1358,6 +1479,7 @@
                 }
                 if (state.scene === 'play' || state.scene === 'countdown' || state.scene === 'paused')
                     drawWarnings();
+                drawMarkers(null);
                 drawBullets();
                 if (state.scene !== 'dying' && state.scene !== 'over')
                     drawPlayer(1);

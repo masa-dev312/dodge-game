@@ -8,11 +8,32 @@ const S = 20;             // 論理座標 20 = 3D空間の 1
 const FIELD_W = W / S;    // 床の幅(18)
 const FIELD_D = H / S;    // 床の奥行き(32)
 
+// game.ts の COLORS と同じ色。障害物は「危ない色」、アイテムは金、緑、虹色(power は毎フレーム色を変える)
 const COLORS = {
-  player: 0x4fd1ff, shield: 0x9cff8f, circle: 0xff5c7a, triangle: 0xffb547,
-  diamond: 0xc77dff, wall: 0xff7b54, hexagon: 0x4dffd2, sweeper: 0xff6bd6,
-  riser: 0x7cf06a, coin: 0xffe066, power: 0xff9d3c, bullet: 0xbff4ff, warn: 0xff4d4d, bg: 0x11142a,
+  player: 0x4fd1ff, shield: 0x7dffa8, circle: 0xff5c7a, triangle: 0xff8a3c,
+  diamond: 0xc77dff, wall: 0xff7b54, hexagon: 0x7d8bff, sweeper: 0xff6bd6,
+  riser: 0xff3b4e, coin: 0xffe066, power: 0xffffff, bullet: 0xbff4ff, warn: 0xff4d4d, bg: 0x11142a,
 };
+
+type ItemKind = 'coin' | 'shield' | 'power';
+const ITEMS: ItemKind[] = ['coin', 'shield', 'power'];
+const isItem = (k: Kind): k is ItemKind => k === 'coin' || k === 'shield' || k === 'power';
+
+// 中心ほど明るい丸い光。加算合成の板に貼って、アイテムの光のにじみにする
+function glowTexture() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const g = c.getContext('2d');
+  if (g) {
+    const grd = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    grd.addColorStop(0, 'rgba(255,255,255,1)');
+    grd.addColorStop(0.3, 'rgba(255,255,255,0.5)');
+    grd.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = grd;
+    g.fillRect(0, 0, 64, 64);
+  }
+  return new THREE.CanvasTexture(c);
+}
 
 // 2D座標(x: 左右、y: 画面の上ほど奥)を3D座標に変換する
 const toX = (x: number) => (x - W / 2) / S;
@@ -98,12 +119,36 @@ function init(): Render3D | null {
   scene.add(limitLine);
 
   // ---- 形と材質 ----
+  // 障害物は光を抑えた金属っぽい固まり、アイテムは自分で強く光るものにして、質感でも区別する
   const mats = {} as Record<keyof typeof COLORS, THREE.MeshStandardMaterial>;
   for (const [k, c] of Object.entries(COLORS) as [keyof typeof COLORS, number][]) {
-    mats[k] = new THREE.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: 0.45, roughness: 0.35, metalness: 0.1 });
+    const item = isItem(k as Kind);
+    mats[k] = new THREE.MeshStandardMaterial({
+      color: c, emissive: c, emissiveIntensity: item ? 0.9 : 0.22, roughness: item ? 0.2 : 0.3, metalness: item ? 0.1 : 0.45,
+    });
   }
   mats.shield.transparent = true;
-  mats.shield.opacity = 0.85;
+  mats.shield.opacity = 0.9;
+
+  // アイテムの演出用の材質(光のにじみ、床の輪、光の柱、まわりを回る粒)
+  const glowTex = glowTexture();
+  const additive = { transparent: true, depthWrite: false, blending: THREE.AdditiveBlending } as const;
+  const fx = {} as Record<ItemKind, { glow: THREE.SpriteMaterial; ring: THREE.MeshBasicMaterial; beam: THREE.MeshBasicMaterial; spark: THREE.MeshBasicMaterial }>;
+  for (const k of ITEMS) {
+    const c = COLORS[k];
+    fx[k] = {
+      glow: new THREE.SpriteMaterial({ map: glowTex, color: c, ...additive, opacity: 0.9 }),
+      ring: new THREE.MeshBasicMaterial({ color: c, ...additive, opacity: 0.8, side: THREE.DoubleSide }),
+      beam: new THREE.MeshBasicMaterial({ color: c, ...additive, opacity: 0.16, side: THREE.DoubleSide }),
+      spark: new THREE.MeshBasicMaterial({ color: 0xffffff, ...additive }),
+    };
+  }
+  const itemRingGeo = new THREE.RingGeometry(1.25, 1.55, 40).rotateX(-Math.PI / 2);
+  const beamGeo = new THREE.CylinderGeometry(1, 1, 1, 20, 1, true);
+  const sparkGeo = new THREE.OctahedronGeometry(1);
+
+  // 障害物の形のふちの線
+  const edgeMat = new THREE.LineBasicMaterial({ color: 0x07080f, transparent: true, opacity: 0.75 });
 
   const geos: Partial<Record<ShapeKind, THREE.BufferGeometry>> & { circle: THREE.BufferGeometry; box: THREE.BufferGeometry } = {
     circle: new THREE.SphereGeometry(1, 24, 16),
@@ -121,28 +166,69 @@ function init(): Render3D | null {
   const shadowGeo = new THREE.CircleGeometry(1, 24).rotateX(-Math.PI / 2);
   const shadowMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.35, depthWrite: false });
 
+  // ボールのトゲ(機雷のように見せて、ぶつかると危ないことを伝える)
+  const spikeGeo = new THREE.ConeGeometry(0.22, 0.55, 6);
+  const spikeDirs: THREE.Vector3[] = [];
+  for (let i = 0; i < 10; i++) {
+    // 球の表面にほぼ均等に並べる
+    const yy = 1 - (i + 0.5) / 10 * 2, rr = Math.sqrt(1 - yy * yy), a = i * 2.39996;
+    spikeDirs.push(new THREE.Vector3(Math.cos(a) * rr, yy, Math.sin(a) * rr));
+  }
+  const up = new THREE.Vector3(0, 1, 0);
+
   function makeThing(o: Thing | Deco) {
     const g = new THREE.Group();
+    const extras: THREE.Object3D[] = []; // g とは別に床の高さに置くもの
+    const sh = new THREE.Mesh(shadowGeo, shadowMat);
+    sh.renderOrder = -1;
+    extras.push(sh);
     if (o.kind === 'wall') {
       for (let i = 0; i < 2; i++) {
         const m = new THREE.Mesh(geos.box, mats.wall);
+        m.add(new THREE.LineSegments(new THREE.EdgesGeometry(geos.box), edgeMat));
         g.add(m);
       }
     } else {
-      g.add(new THREE.Mesh(geos[o.kind] || geos.circle, mats[o.kind as keyof typeof COLORS] || mats.circle));
+      const geo = geos[o.kind] || geos.circle;
+      const core = new THREE.Mesh(geo, mats[o.kind as keyof typeof COLORS] || mats.circle);
+      g.add(core);
+      if (isItem(o.kind)) {
+        const f = fx[o.kind];
+        const glow = new THREE.Sprite(f.glow);
+        g.add(glow);
+        const sparks: THREE.Mesh[] = [];
+        for (let i = 0; i < 3; i++) {
+          const sp = new THREE.Mesh(sparkGeo, f.spark);
+          g.add(sp);
+          sparks.push(sp);
+        }
+        const ring = new THREE.Mesh(itemRingGeo, f.ring);
+        const beam = new THREE.Mesh(beamGeo, f.beam);
+        extras.push(ring, beam);
+        g.userData.item = { glow, sparks, ring, beam };
+      } else {
+        if (o.kind !== 'circle') core.add(new THREE.LineSegments(new THREE.EdgesGeometry(geo, 25), edgeMat));
+        if (o.kind === 'circle') {
+          for (const d of spikeDirs) {
+            const sp = new THREE.Mesh(spikeGeo, mats.circle);
+            sp.position.copy(d).multiplyScalar(1.05);
+            sp.quaternion.setFromUnitVectors(up, d);
+            core.add(sp);
+          }
+        }
+      }
     }
-    const sh = new THREE.Mesh(shadowGeo, shadowMat);
-    sh.renderOrder = -1;
     g.userData.shadow = sh;
-    scene.add(sh);
+    g.userData.extras = extras;
+    for (const e of extras) scene.add(e);
     scene.add(g);
     return g;
   }
 
-  function placeThing(g: THREE.Group, o: Thing | Deco, hidden: boolean) {
+  function placeThing(g: THREE.Group, o: Thing | Deco, hidden: boolean, now: number) {
     const sh = g.userData.shadow as THREE.Mesh;
     g.visible = !hidden;
-    sh.visible = !hidden;
+    for (const e of g.userData.extras as THREE.Object3D[]) e.visible = !hidden;
     if (hidden) return;
     if (o.kind === 'wall') {
       const depth = o.h / S, hgt = 1.4, z = toZ(o.y + o.h / 2);
@@ -155,11 +241,12 @@ function init(): Render3D | null {
       sh.visible = false;
       return;
     }
-    const r = o.r / S;
+    const item = isItem(o.kind);
+    // アイテムは少し大きく、高く浮かべて上下にゆらす
+    const r = o.r / S * (item ? 1.3 : 1);
     const m = g.children[0];
-    const item = o.kind === 'coin' || o.kind === 'shield' || o.kind === 'power';
-    const lift = item ? 0.6 : 0.35;
-    const y = r + lift + (item ? Math.sin((o.rot || 0) * 0.8) * 0.15 : 0);
+    const lift = item ? 0.9 : 0.35;
+    const y = r + lift + (item ? Math.sin(now / 260 + o.x) * 0.2 : 0);
     g.position.set(toX(o.x), y, toZ(o.y));
     // 弾が当たった瞬間は少しふくらませる
     const pop = (o.hitT ?? 0) > 0 ? 1.25 : 1;
@@ -175,24 +262,41 @@ function init(): Render3D | null {
     else if (o.kind === 'sweeper') m.rotation.y = o.vx !== undefined && o.vx < 0 ? Math.PI : 0;
     sh.position.set(g.position.x, 0.02, g.position.z);
     sh.scale.setScalar(r * 1.05);
+
+    const fxItem = g.userData.item as { glow: THREE.Sprite; sparks: THREE.Mesh[]; ring: THREE.Mesh; beam: THREE.Mesh } | undefined;
+    if (fxItem) {
+      const pulse = 1 + Math.sin(now / 180) * 0.12;
+      fxItem.glow.scale.setScalar(r * 4.2 * pulse);
+      fxItem.sparks.forEach((sp, i) => {
+        const a = now / 400 + i * (Math.PI * 2 / 3);
+        sp.position.set(Math.cos(a) * r * 1.9, Math.sin(now / 300 + i) * r * 0.6, Math.sin(a) * r * 1.9);
+        sp.scale.setScalar(r * 0.18 * (0.7 + 0.3 * Math.sin(now / 90 + i * 2)));
+        sp.rotation.set(a, a, 0);
+      });
+      fxItem.ring.position.set(g.position.x, 0.03, g.position.z);
+      fxItem.ring.scale.setScalar(r * pulse);
+      fxItem.ring.rotation.y = now / 500;
+      fxItem.beam.position.set(g.position.x, 1.6, g.position.z);
+      fxItem.beam.scale.set(r * 0.75, 3.2, r * 0.75);
+    }
   }
 
   // 画面上の図形と3Dの物体の対応表
   const things = new Map<Thing, THREE.Group>();
   const decos = new Map<Deco, THREE.Group>();
-  function sync<T extends Thing | Deco>(map: Map<T, THREE.Group>, list: T[], hideFn: ((o: T) => boolean) | null) {
+  function sync<T extends Thing | Deco>(map: Map<T, THREE.Group>, list: T[], now: number) {
     const alive = new Set(list);
     for (const [o, g] of map) {
       if (!alive.has(o)) {
         scene.remove(g);
-        scene.remove(g.userData.shadow as THREE.Mesh);
+        for (const e of g.userData.extras as THREE.Object3D[]) scene.remove(e);
         map.delete(o);
       }
     }
     for (const o of list) {
       let g = map.get(o);
       if (!g) { g = makeThing(o); map.set(o, g); }
-      placeThing(g, o, hideFn ? hideFn(o) : false);
+      placeThing(g, o, false, now);
     }
   }
 
@@ -339,9 +443,15 @@ function init(): Render3D | null {
     limitLine.visible = state.scene !== 'title';
     limitLine.position.z = toZ(H * opts.playerMinY - opts.playerSize / 2);
 
+    // 3方向アイテムは虹色に色を変える
+    const hue = (now / 1500) % 1;
+    mats.power.color.setHSL(hue, 1, 0.62);
+    mats.power.emissive.setHSL(hue, 1, 0.5);
+    for (const m of [fx.power.glow, fx.power.ring, fx.power.beam]) m.color.setHSL(hue, 1, 0.6);
+
     // 障害物とアイテム
-    sync(things, state.scene === 'title' ? [] : state.things, null);
-    sync(decos, state.scene === 'title' ? state.deco : [], null);
+    sync(things, state.scene === 'title' ? [] : state.things, now);
+    sync(decos, state.scene === 'title' ? state.deco : [], now);
 
     // 自機
     const p = state.player;
